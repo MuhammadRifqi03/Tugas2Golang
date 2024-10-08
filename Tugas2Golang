@@ -1,0 +1,191 @@
+package main
+
+import (
+    "bufio"
+    "encoding/base64"
+    "fmt"
+    "os"
+    "regexp"
+    "strconv"
+    "strings"
+    "sync"
+    "time"
+)
+
+// struct untuk bagian Menu Item
+type MenuItem struct {
+    Name  string
+    Price float64
+}
+
+// struct untuk bagian Pesanan
+type Order struct {
+    MenuItems []MenuItem
+    Total     float64
+}
+
+// Bagian Interface untuk manajemen menu
+type MenuManager interface {
+    AddMenuItem(name string, price float64)
+    PrintMenu()
+}
+
+type Restaurant struct {
+    Menu []MenuItem
+}
+
+var wg sync.WaitGroup
+
+// Pengimplementasian Interface MenuManager
+func (r *Restaurant) AddMenuItem(name string, price float64) {
+    r.Menu = append(r.Menu, MenuItem{Name: name, Price: price})
+}
+
+func (r *Restaurant) PrintMenu() {
+    fmt.Println("Menu : ")
+    for _, item := range r.Menu {
+        fmt.Printf("- %s: Rp%.2f\n", item.Name, item.Price)
+    }
+}
+
+func takeOrder(restaurant *Restaurant, ch chan<- Order) {
+    order := Order{}
+    var itemName string
+    var itemQty int
+    scanner := bufio.NewScanner(os.Stdin)
+
+    for {
+        // Menampilkan menu jika ingin melihat ulang
+        fmt.Println("Masukkan nama item (ketik 'Selesai' untuk mengakhiri pesanan): ")
+        scanner.Scan()
+        itemName = strings.ToLower(scanner.Text())
+
+        if itemName == "selesai" {
+            break
+        }
+
+        if MenuItem, ok := validateOrderItem(restaurant, itemName); ok {
+            fmt.Println("MASUKKAN JUMLAH:  ")
+            fmt.Scanln(&itemQty)
+
+            order.MenuItems = append(order.MenuItems, *MenuItem)
+            order.Total += MenuItem.Price * float64(itemQty)
+        } else {
+            fmt.Println("Item tidak valid. Mohon untuk menginputkan kembali..!!!")
+        }
+    }
+
+    // kirim pesanan ke dalam channel
+    ch <- order
+}
+
+// Function untuk validasi input pesanan
+func validateOrderItem(restaurant *Restaurant, itemName string) (*MenuItem, bool) {
+    for _, item := range restaurant.Menu {
+        if strings.ToLower(item.Name) == itemName {
+            return &item, true
+        }
+    }
+    return nil, false
+}
+
+// Function untuk mengencode pesanan menggunakan base64
+func encodeOrder(order Order) string {
+    orderDate := fmt.Sprintf("Pesanan : %v, Total : Rp%.2f", order.MenuItems, order.Total)
+    encoded := base64.StdEncoding.EncodeToString([]byte(orderDate))
+    return encoded
+}
+
+// Panic, Recover & Defer dalam Error handling
+func validatePrice(price string) (float64, error) {
+    defer func() {
+        if r := recover(); r != nil {
+            fmt.Println("Terjadi kesalahan saat memasukkan harga : ", r)
+        }
+    }()
+
+    if matched, _ := regexp.MatchString("^[0-9]+(\\.[0-9]+)?$", price); !matched {
+        panic("Format harga tidak valid")
+    }
+
+    return strconv.ParseFloat(price, 64)
+}
+
+func main() {
+    restaurant := &Restaurant{}
+
+    // Tambah menu menggunakan pointer dan method
+    restaurant.AddMenuItem("Kepiting Saus Manado", 65000)
+    restaurant.AddMenuItem("King Crab Saus Bawang", 120000)
+    restaurant.AddMenuItem("Kepiting Soka Uluwatu", 95000)
+    restaurant.AddMenuItem("Fish Skin Telor Asin Singapore", 75000)
+    restaurant.AddMenuItem("Kakap Goreng Ala Thai", 120000)
+    restaurant.AddMenuItem("Barakuda Bakar Saos Dua Rasa", 65000)
+    restaurant.AddMenuItem("Kerapu Steam Kecap", 100000)
+    restaurant.AddMenuItem("Bandeng Bakar Sambar Matah", 50000)
+    restaurant.AddMenuItem("Gurame Bakar Kecap", 75000)
+    restaurant.AddMenuItem("Nila Steam Bangkok", 45000)
+    restaurant.AddMenuItem("Ikan Pari Bakar Taliwang", 65500)
+
+    // Menampilkan Menu
+    restaurant.PrintMenu()
+
+    // channel Untuk Pesanan
+    orderChannel := make(chan Order)
+
+    // Menggunakan Goroutine untuk Menerima Pesanan
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        takeOrder(restaurant, orderChannel)
+    }()
+
+    // Tunggu Semua Goroutine Selesai Sebelum Menutup Channel
+    go func() {
+        wg.Wait()
+        close(orderChannel)
+    }()
+
+    var totalOrder float64
+
+    // Mengambil Pesanan dari Channel
+    for order := range orderChannel {
+        fmt.Println("Pesanan Anda : ")
+        for _, item := range order.MenuItems {
+            fmt.Printf("- %s\n", item.Name)
+        }
+        fmt.Printf("Total Harga : Rp%.2f\n", order.Total)
+        totalOrder += order.Total
+    }
+
+    // Loop untuk Validasi Input Pembayaran
+    var priceInput string
+    var price float64
+    for {
+        fmt.Println("Masukkan Jumlah Yang Dibayar : ")
+        fmt.Scanln(&priceInput)
+
+        // Validasi Input Pembayaran
+        if validPrice, err := validatePrice(priceInput); err == nil {
+            price = validPrice
+            if price >= totalOrder {
+                fmt.Println("Jumlah Yang Dibayar Valid. Uang Kembalian :Rp ", price-totalOrder)
+                break
+            } else {
+                fmt.Println("Jumlah Yang Dibayar Kurang Dari Total Pesanan. Coba Lagi.")
+            }
+        } else {
+            fmt.Println("Input Pembayaran Tidak Valid. Harap Masukkan angka yang benar.")
+        }
+    }
+
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        fmt.Println("Memproses pesanan di goroutine lain.....")
+        time.Sleep(2 * time.Second)
+    }()
+    wg.Wait()
+
+    fmt.Println("Program Selesai")
+}
